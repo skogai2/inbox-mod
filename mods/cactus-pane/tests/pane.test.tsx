@@ -444,3 +444,11 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(calls.some(c => c[1] === 'answer')).toBe(false)
   })
 }
+
+test('a colon line with an empty inbox reaches the model as typed', async ($, on) => {
+  const calls: string[][] = []
+  on('prompt.submit', (_$, e) => ({ text: e.text }))
+  await mounted($, on, ROW, calls, 'terminal')
+  await $.prompt.submit({ ...TYPED, text: ':1' })
+  expect((await $.prompt.submit({ ...TYPED, text: ':1 then a thought' })).text).toBe(':1 then a thought')
+})

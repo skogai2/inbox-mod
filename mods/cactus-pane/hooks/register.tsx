@@ -700,15 +700,17 @@ async function togglePreview($: EngineInterface, path: string): Promise<void> {
 // The prompt's colon line: `:1`, `:s`, `:e why`, `:q12 2`. It acts on the
 // pane's selected row (or the keyed one) with the pane's own keys and never
 // reaches the model; `::` sends the line as typed, less one colon. Returns
-// what to tell the person.
-async function colon($: EngineInterface, line: string): Promise<string> {
+// what to tell the person, or null to let the line through (an empty inbox:
+// nothing to answer, so it was meant for the model).
+async function colon($: EngineInterface, line: string): Promise<string | null> {
   const list = await read($, rows)
+  if (list.length === 0) return null
   let rest = line.trim()
   const aimed = /^(q\d+)(?:\s+|$)/.exec(rest)
   if (aimed) rest = rest.slice(aimed[0].length)
   const key = aimed?.[1] ?? (await read($, selected)) ?? list[0]?.key
   const row = list.find(r => r.key === key)
-  if (row === undefined) return key === undefined ? 'cactus: inbox empty' : `cactus: no open ${key}`
+  if (row === undefined) return `cactus: no open ${key ?? ''}`
   const at = (msg: string) => `cactus ${row.key}: ${msg}`
   const [word = '', ...more] = rest.split(/\s+/)
   const arg = rest.slice(word.length).trim()
@@ -812,7 +814,8 @@ export const register: Register = on => {
     const m = /^\s*:(:?)([\s\S]*)$/.exec(e.text)
     if (m === null) return next(e)
     if (m[1] === ':') return next({ ...e, text: `:${m[2] ?? ''}` })
-    return { drop: await colon($, m[2] ?? '') }
+    const told = await colon($, m[2] ?? '')
+    return told === null ? next(e) : { drop: told }
   })
 
   on('tool.call', { tool: 'Bash' }, ($, e, next) => {
