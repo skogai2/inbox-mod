@@ -1104,6 +1104,9 @@ export const register: Register = on => {
                   key={`${row.key}:sel`}
                   label={`${isCurrent ? '▸' : ' '} ${row.key}`}
                   plain
+                  // ctrl+x tab lands the ring here, where the hotkeys live, not
+                  // in the Input, which swallows them.
+                  autoFocus={isCurrent ? true : undefined}
                   onPress={() => {
                     if (!isCurrent) return void select($, row.key).then(() => pinTop($, row.key))
                     void enterOnOpen($, row)
