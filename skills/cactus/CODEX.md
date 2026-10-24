@@ -31,9 +31,13 @@ monitor or waiter. Inside herdr (`HERDR_PANE_ID` set) the session-start hook
 runs `cactus deliver herdr`. See [codex-mod-mode.md](../../docs/codex-mod-mode.md).
 
 Codex hooks provide the frontier at `UserPromptSubmit`; the `Stop` hook never
-blocks. A `PermissionRequest` hook can post a durable `cactus run` approval
-row before it declines the transient Codex approval request. After an
-approved row wakes you, re-read its result before running anything.
+blocks. Native permission handling is the default. Setting
+`CACTUS_PERMISSION_INBOX=1` opts into the legacy `PermissionRequest` hook:
+it posts a durable `cactus run` row and declines the host request. A run row
+can execute externally, but does not grant the requesting tool sandbox
+access. Do not enable this when accessing Cactus itself requires approval:
+reading an approval would create another approval. After an approved run
+row wakes you, re-read its result before running anything.
 
 Plugin hooks are not trusted automatically: review and trust the plugin hook
 definition after installation.

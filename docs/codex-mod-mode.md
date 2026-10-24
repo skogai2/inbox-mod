@@ -58,3 +58,28 @@ Agent workflow: [plugins/cactus/skills/cactus/SKILL.md](../plugins/cactus/skills
     bash plugins/cactus/tests/test-hooks.sh
 
 Runs against a `mktemp` inbox. Needs `jq` and an installed `cactus` on `PATH` (`uv tool install --editable .`); it does not run the checkout.
+
+## Permission requests and sandbox access
+
+Native Codex permission handling is the default. The permission hook exits
+silently without touching Cactus unless `CACTUS_PERMISSION_INBOX=1` is set.
+This does not approve a command: the host retains its permission decision.
+Explicit `cactus run` rows remain available independently.
+
+The opt-in preserves the legacy conversion of a host request into a run row,
+followed by denying the host request. Approving that row can execute the
+command in the human surface, but does not grant future sandbox access.
+When Cactus's database is outside the writable roots, even `feed` opens the
+store through migrations and can fail with a readonly-database error.
+Intercepting its escalation then creates another row instead of resolving
+access. Repeated retries can therefore create duplicate approvals.
+
+Keep the opt-in off to request database access through the host. This patch
+does not change database permissions or make Store opens read-only. Reload
+the plugin from the updated source before verifying native approval in a
+live session; editing the source does not update an already loaded cache.
+
+Regression coverage: `tests/test_hooks.py` checks that repeated feed and
+ordinary command requests create no rows by default, and that explicit
+opt-in retains run-row creation. These are subprocess tests with a scratch
+inbox, not proof of native host approval behavior.

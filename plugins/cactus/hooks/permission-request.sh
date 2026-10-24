@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -u
 
+# A Cactus run executes outside the requesting tool; it cannot grant that
+# tool sandbox access. Intercepting inbox reads therefore creates an approval
+# loop. Leave native permission handling in place unless explicitly opted in.
+[ "${CACTUS_PERMISSION_INBOX:-0}" = "1" ] || exit 0
+
 input=$(cat)
 command -v cactus >/dev/null 2>&1 || exit 0
 command -v jq >/dev/null 2>&1 || exit 0

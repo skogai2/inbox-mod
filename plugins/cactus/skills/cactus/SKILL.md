@@ -68,6 +68,8 @@ with `o` (a diff vs git HEAD when changed). Repeat for more;
 human answers blind.
 
 The `UserPromptSubmit` hook injects your outstanding frontier. The `Stop` hook
-never blocks. The `PermissionRequest`
-hook converts an approval-needed Bash command into a Cactus run row and denies
-the transient request so the durable inbox remains the approval surface.
+never blocks. Native Codex permission handling stays in place by default.
+Only `CACTUS_PERMISSION_INBOX=1` enables the `PermissionRequest` hook's legacy
+conversion to a Cactus run row. That row can execute a command externally;
+its approval does not grant sandbox access to later tool calls. Leave this
+option off when Cactus itself needs permission to access its database.
