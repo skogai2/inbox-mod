@@ -10,6 +10,10 @@
 #     markers along the way
 #   - exempt turns opened by a task-notification or cross-session message,
 #     since those are background events, not a human handing off a decision
+#   - exempt a turn opened by a cactus-pane wake whose every row rests: a
+#     steer answered (or skipped) with its own chosen default, or a row the
+#     human cleared unanswered (q25) -- the human agreed to stop, so asking
+#     for a next fork only loops done -> idle -> done
 #   - stay silent while the agent already has an open row in this project
 #     (q469): a fork is waiting on the human, so there is nothing to post.
 #     live and elaborate do not count: a standing plan/review would mute
@@ -20,6 +24,7 @@
 # Python 3 stdlib only; calls the cactus CLI by argv.
 import json
 import os
+import re
 import shutil
 import sys
 
@@ -105,6 +110,64 @@ def turn_boundary(lines):
     return None, None
 
 
+WAKE_HEAD = re.compile(r"^(q\d+) \S")
+
+
+def opener_text(lines, idx):
+    try:
+        return as_text(json.loads(lines[idx]).get("message", {}).get("content"))
+    except Exception:
+        return ""
+
+
+def wake_keys(text):
+    """The keys a cactus-pane wake names, or [] when text is not one. A wake
+    is only `qN question` heads, each followed by indented detail lines
+    (`  answer: done`, `  (cleared)`)."""
+    keys, bare = [], False
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        m = WAKE_HEAD.match(line)
+        if m:
+            if bare:
+                return []
+            keys.append(m.group(1))
+            bare = True
+        elif line.startswith("  ") and keys:
+            bare = False
+        else:
+            return []
+    # A head with no detail under it is prose that starts with a key.
+    return [] if bare else keys
+
+
+def rests(row):
+    """True when the human's move on this row asks for nothing new: a steer
+    answered or skipped with its own chosen default, or a row cleared with
+    no answer at all."""
+    if row.get("status") != "cleared":
+        return False
+    answer = row.get("answer")
+    if answer is None:
+        return True
+    if row.get("act") != "steer" or not row.get("chosen") or answer.get("text"):
+        return False
+    return answer.get("skipped") or answer.get("selected") == [row["chosen"]]
+
+
+def wake_rests(keys, agent):
+    """Every woken row rests. Rows read through the CLI, owner-scoped."""
+    if not keys:
+        return False
+    argv = ["cactus", "get", *keys, "--json"] + (["--agent", agent] if agent else [])
+    got = ident.run(argv)
+    rows = ident.parse_json(got[1]) if got and got[0] == 0 else None
+    if not isinstance(rows, list) or len(rows) != len(keys):
+        return False
+    return all(isinstance(r, dict) and rests(r) for r in rows)
+
+
 def turn_has_fork(lines, start):
     for idx in range(start, len(lines)):
         line = lines[idx].strip()
@@ -182,6 +245,9 @@ def main():
 
     boundary_idx, boundary_kind = turn_boundary(lines)
     if boundary_kind in ("task_notification", "cross_session"):
+        return 0
+
+    if boundary_kind == "human" and wake_rests(wake_keys(opener_text(lines, boundary_idx)), agent):
         return 0
 
     start = (boundary_idx + 1) if boundary_idx is not None else 0

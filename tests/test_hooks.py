@@ -522,3 +522,47 @@ def test_session_start_lists_stale_rows_only_when_there_are_some(cli, hook_env, 
     assert "other-ag  2d  old question" in line
     assert "second line" not in line
     assert not any(ln.startswith(f"  {fresh}  ") for ln in start.stdout.splitlines())
+
+
+def _wake_transcript(tmp_path: Path, prompt: str) -> str:
+    """A cactus-pane wake prompt followed by a reply with no fork."""
+    path = tmp_path / "wake.jsonl"
+    rows = [
+        {"type": "user", "message": {"content": prompt}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "stopping"}]}},
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    return str(path)
+
+
+def test_stop_hook_lets_a_wake_that_rests_on_the_default_end(hook_env, project, tmp_path, cli):
+    # q25: a steer answered with its own chosen default, or a row cleared
+    # unanswered, asks for nothing new; demanding a fork looped done -> idle.
+    script = ROOT_HOOKS / "stop_fork.py"
+
+    def post(*args):
+        return cli("ask", "--no-wait", "--agent", "s1", *args, cwd=project).stdout.strip()
+
+    def hold(prompt):
+        payload = {"cwd": project, "session_id": "s1", "transcript_path": _wake_transcript(tmp_path, prompt)}
+        out = run_hook(script, payload, hook_env, project).stdout.strip()
+        return out != "" and json.loads(out)["decision"] == "block"
+
+    rest = post("wrap up?", "--act", "steer", "--chosen", "done", "-c", "done", "-c", "more")
+    cli("answer", rest, "-s", "done", cwd=project)
+    cli("clear", rest, "--agent", "s1", cwd=project)
+    assert not hold(f"{rest} wrap up?\n  answer: done\n  (cleared)")
+
+    work = post("next?", "--act", "steer", "--chosen", "done", "-c", "done", "-c", "more")
+    cli("answer", work, "-s", "more", cwd=project)
+    cli("clear", work, "--agent", "s1", cwd=project)
+    assert hold(f"{work} next?\n  answer: more\n  (cleared)")
+    # One row asking for work holds the whole wake.
+    assert hold(f"{rest} wrap up?\n  answer: done\n  (cleared)\n{work} next?\n  answer: more\n  (cleared)")
+
+    note = post("fyi", "--act", "notify")
+    cli("retire", note, cwd=project)
+    assert not hold(f"{note} fyi\n  declined: the human cleared it")
+
+    # A human prompt that only mentions a key is not a wake.
+    assert hold(f"{rest} looked fine, now fix the tests")
