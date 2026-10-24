@@ -25,12 +25,15 @@ agent=$(jq -r '.session_id // empty' <<<"$input")
 [ -n "$agent" ] || exit 0
 
 hook_cwd=$(jq -r '.cwd // empty' <<<"$input")
+# The host may launch hooks elsewhere. Resolve all reads and clears in the
+# payload's project; an inaccessible cwd must never fall back to another inbox.
+cd -- "${hook_cwd:-$PWD}" 2>/dev/null || exit 0
 enabled=$(cactus project-status --json --cwd "${hook_cwd:-$PWD}" 2>/dev/null \
   | jq -r 'if .enabled == false then "false" else "true" end' 2>/dev/null)
 [ "${enabled:-true}" = "true" ] || exit 0
 
 # -s any includes cleared rows; the jq filters below drop them by status.
-# Scope is the cactus process cwd (the hook's), not the payload's `cwd`.
+# The process cwd above is pinned to the payload's project.
 rows=$(cactus list -s any --agent "$agent" --json 2>/dev/null) || exit 0
 [ -n "$rows" ] || exit 0
 printf '%s\n' "Cactus mod mode (plugin loaded): use --agent $agent on every row; post decisions with cactus ask --no-wait, never arm a background cactus wait. This hook is the nearest Codex equivalent to the mod prompt injection and live pane: it refreshes on each user turn."

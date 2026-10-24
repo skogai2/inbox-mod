@@ -64,6 +64,7 @@ def hook_env(tmp_path: Path, scratch_env: dict[str, str]) -> dict[str, str]:
     env["XDG_STATE_HOME"] = str(tmp_path / "xdg-state")
     # The Stop hooks are on by default (q411); the suite runs them that way.
     env.pop("CACTUS_STOP_HOOK", None)
+    env.pop("CACTUS_PERMISSION_INBOX", None)
     return env
 
 
@@ -220,7 +221,8 @@ def test_codex_disabled_project_is_silent(cli, hook_env, project):
         "tool_input": {"command": "echo hi", "description": "test"},
         "cwd": project,
     }
-    req = run_hook(CODEX_HOOKS / "permission-request.sh", payload, hook_env, project)
+    req = run_hook(CODEX_HOOKS / "permission-request.sh", payload,
+                   dict(hook_env, CACTUS_PERMISSION_INBOX="1"), project)
     assert req.stdout.strip() == ""
     assert list_all(cli, project) == []
 
@@ -252,7 +254,8 @@ def test_codex_enabled_project(cli, hook_env, project):
         "tool_input": {"command": "rm -rf /tmp/whatever", "description": "needs approval"},
         "cwd": project,
     }
-    req = run_hook(CODEX_HOOKS / "permission-request.sh", payload, hook_env, project)
+    req = run_hook(CODEX_HOOKS / "permission-request.sh", payload,
+                   dict(hook_env, CACTUS_PERMISSION_INBOX="1"), project)
     assert req.returncode == 0
     body = json.loads(req.stdout)
     new_key = body["hookSpecificOutput"]["decision"]["message"]
@@ -288,7 +291,8 @@ def test_codex_ignore_not_fooled_by_false(cli, hook_env, project):
         "tool_input": {"command": "echo nope", "description": "test"},
         "cwd": project,
     }
-    req = run_hook(CODEX_HOOKS / "permission-request.sh", payload, hook_env, project)
+    req = run_hook(CODEX_HOOKS / "permission-request.sh", payload,
+                   dict(hook_env, CACTUS_PERMISSION_INBOX="1"), project)
     assert req.stdout.strip() == ""
     assert list_all(cli, project) == []
 
@@ -566,3 +570,59 @@ def test_stop_hook_lets_a_wake_that_rests_on_the_default_end(hook_env, project, 
 
     # A human prompt that only mentions a key is not a wake.
     assert hold(f"{rest} looked fine, now fix the tests")
+
+
+@pytest.mark.parametrize("setting", [None, "0", "", "true"])
+@pytest.mark.parametrize("command", ["cactus feed --json --agent test", "echo needs permission"])
+def test_codex_permission_default_keeps_native_approval(cli, hook_env, project, setting, command):
+    """Repeated host requests must not create recursive Cactus approvals."""
+    cli("project", "activate", cwd=project)
+    if setting is not None:
+        hook_env["CACTUS_PERMISSION_INBOX"] = setting
+    payload = {"session_id": "test", "cwd": project,
+               "tool_input": {"command": command}}
+    for _ in range(2):
+        result = run_hook(CODEX_HOOKS / "permission-request.sh", payload, hook_env, project)
+        assert result.returncode == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+    assert list_all(cli, project) == []
+
+
+@pytest.mark.parametrize("script", ["frontier.sh", "session-start.sh"])
+def test_codex_hooks_use_payload_project(cli, hook_env, project, tmp_path, script):
+    other = tmp_path / "other project"
+    other.mkdir()
+    agent = "same-session"
+    for cwd, text in [(project, "payload inbox"), (str(other), "launcher inbox")]:
+        posted = cli("ask", text, "--no-wait", "--agent", agent, cwd=cwd)
+        assert posted.returncode == 0
+    expected = list_all(cli, project)[0]
+    unrelated = list_all(cli, str(other))[0]
+    # Same display key in two projects makes an accidental clear dangerous.
+    assert expected["key"] == unrelated["key"]
+    if script == "frontier.sh":
+        for cwd in (project, str(other)):
+            assert cli("answer", expected["key"], "scope answer", cwd=cwd).returncode == 0
+    result = run_hook(CODEX_HOOKS / script,
+                      {"session_id": agent, "cwd": project}, hook_env, str(other))
+    assert result.returncode == 0
+    assert "payload inbox" in result.stdout
+    assert "launcher inbox" not in result.stdout
+    if script == "frontier.sh":
+        assert list_all(cli, project)[0]["status"] == "cleared"
+        assert list_all(cli, str(other))[0]["status"] == "answered"
+
+
+@pytest.mark.parametrize("script", ["frontier.sh", "session-start.sh"])
+def test_codex_hooks_missing_payload_directory_do_not_fall_back(cli, hook_env, project, script):
+    posted = cli("ask", "leave this row alone", "--no-wait", "--agent", "scope-agent", cwd=project)
+    assert posted.returncode == 0
+    key = posted.stdout.strip()
+    assert cli("answer", key, "keep", cwd=project).returncode == 0
+    result = run_hook(CODEX_HOOKS / script,
+                      {"session_id": "scope-agent", "cwd": project + "/missing"},
+                      hook_env, project)
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert list_all(cli, project)[0]["status"] == "answered"
