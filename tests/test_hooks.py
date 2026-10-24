@@ -587,3 +587,42 @@ def test_codex_permission_default_keeps_native_approval(cli, hook_env, project, 
         assert result.stdout == ""
         assert result.stderr == ""
     assert list_all(cli, project) == []
+
+
+@pytest.mark.parametrize("script", ["frontier.sh", "session-start.sh"])
+def test_codex_hooks_use_payload_project(cli, hook_env, project, tmp_path, script):
+    other = tmp_path / "other project"
+    other.mkdir()
+    agent = "same-session"
+    for cwd, text in [(project, "payload inbox"), (str(other), "launcher inbox")]:
+        posted = cli("ask", text, "--no-wait", "--agent", agent, cwd=cwd)
+        assert posted.returncode == 0
+    expected = list_all(cli, project)[0]
+    unrelated = list_all(cli, str(other))[0]
+    # Same display key in two projects makes an accidental clear dangerous.
+    assert expected["key"] == unrelated["key"]
+    if script == "frontier.sh":
+        for cwd in (project, str(other)):
+            assert cli("answer", expected["key"], "scope answer", cwd=cwd).returncode == 0
+    result = run_hook(CODEX_HOOKS / script,
+                      {"session_id": agent, "cwd": project}, hook_env, str(other))
+    assert result.returncode == 0
+    assert "payload inbox" in result.stdout
+    assert "launcher inbox" not in result.stdout
+    if script == "frontier.sh":
+        assert list_all(cli, project)[0]["status"] == "cleared"
+        assert list_all(cli, str(other))[0]["status"] == "answered"
+
+
+@pytest.mark.parametrize("script", ["frontier.sh", "session-start.sh"])
+def test_codex_hooks_missing_payload_directory_do_not_fall_back(cli, hook_env, project, script):
+    posted = cli("ask", "leave this row alone", "--no-wait", "--agent", "scope-agent", cwd=project)
+    assert posted.returncode == 0
+    key = posted.stdout.strip()
+    assert cli("answer", key, "keep", cwd=project).returncode == 0
+    result = run_hook(CODEX_HOOKS / script,
+                      {"session_id": "scope-agent", "cwd": project + "/missing"},
+                      hook_env, project)
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert list_all(cli, project)[0]["status"] == "answered"

@@ -17,6 +17,9 @@ agent=$(jq -r '.session_id // empty' <<<"$input")
 
 # A failed project-status reads as enabled: a broken check must not hide cactus.
 hook_cwd=$(jq -r '.cwd // empty' <<<"$input")
+# The host may launch hooks elsewhere. Resolve all reads and clears in the
+# payload's project; an inaccessible cwd must never fall back to another inbox.
+cd -- "${hook_cwd:-$PWD}" 2>/dev/null || exit 0
 enabled=$(cactus project-status --json --cwd "${hook_cwd:-$PWD}" 2>/dev/null \
   | jq -r 'if .enabled == false then "false" else "true" end' 2>/dev/null)
 if [ "${enabled:-true}" != "true" ]; then

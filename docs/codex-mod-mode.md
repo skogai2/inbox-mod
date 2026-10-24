@@ -17,6 +17,10 @@ Without an entry, answers surface on the next user turn.
 
 Any miss: exit 0, no output.
 
+Frontier and session-start resolve reads and clears in the payload cwd, falling
+back to the process cwd only when the payload omits it. An inaccessible payload
+directory exits silently instead of reading or clearing another project.
+
 **Output**
 
 First line, always:
