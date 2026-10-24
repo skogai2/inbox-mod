@@ -445,6 +445,30 @@ async function submitText($: EngineInterface, key: string, value: string): Promi
   return true
 }
 
+// A choice key, from the card or the prompt: a data row copies the chunk, a
+// multi (or flipped) row toggles it, a run row's approve runs it, else answers.
+async function pickChoice(
+  $: EngineInterface,
+  row: Row,
+  label: string,
+  surface?: Parameters<EngineInterface['ui']['copy']>[0]['surface'],
+): Promise<void> {
+  const isMulti = row.kind === 'multi' || (await read($, flips))[row.key] === true
+  if (row.act === 'data') {
+    const body = row.choices.find(c => c.label === label)?.description ?? ''
+    await $.ui.copy({ text: body, ...(surface === undefined ? {} : { surface }) })
+    await answerRow($, row.key, ['-s', label])
+  } else if (isMulti) {
+    // The ring stays on the header, where enter sends.
+    await toggle($, row.key, label, row.recommend ?? [])
+    await $.ui.focus({ requestId: PANE, key: `${row.key}:sel` }).catch(() => undefined)
+  } else if (row.act === 'run' && label === 'approve') {
+    await runRow($, row.key, true)
+  } else {
+    await answerRow($, row.key, ['-s', label])
+  }
+}
+
 async function setMode($: EngineInterface, key: string, mode: 'elaborate' | null): Promise<void> {
   await update($, modes, all => {
     const { [key]: _gone, ...rest } = all
@@ -673,6 +697,84 @@ async function togglePreview($: EngineInterface, path: string): Promise<void> {
   await update($, previews, all => ({ ...all, [path]: text }))
 }
 
+// The prompt's colon line: `:1`, `:s`, `:e why`, `:q12 2`. It acts on the
+// pane's selected row (or the keyed one) with the pane's own keys and never
+// reaches the model; `::` sends the line as typed, less one colon. Returns
+// what to tell the person.
+async function colon($: EngineInterface, line: string): Promise<string> {
+  const list = await read($, rows)
+  let rest = line.trim()
+  const aimed = /^(q\d+)(?:\s+|$)/.exec(rest)
+  if (aimed) rest = rest.slice(aimed[0].length)
+  const key = aimed?.[1] ?? (await read($, selected)) ?? list[0]?.key
+  const row = list.find(r => r.key === key)
+  if (row === undefined) return key === undefined ? 'cactus: inbox empty' : `cactus: no open ${key}`
+  const at = (msg: string) => `cactus ${row.key}: ${msg}`
+  const [word = '', ...more] = rest.split(/\s+/)
+  const arg = rest.slice(word.length).trim()
+  const confirmAt = row.kind === 'confirm' ? ({ y: 0, n: 1 } as Record<string, number>)[word] : undefined
+  if (/^[1-9]$/.test(word) || confirmAt !== undefined) {
+    const n = confirmAt ?? Number(word) - 1
+    if (row.act === 'plan') {
+      const s = row.steps[n]
+      if (s === undefined) return at(`no step ${n + 1}`)
+      await cactus($, row.key, ['plan', row.key, s.done ? '--undone' : '--done', String(s.n)])
+      return at(`step ${s.n} ${s.done ? 'undone' : 'done'}`)
+    }
+    const c = row.choices[n]
+    if (c === undefined) return at(`no choice ${word}`)
+    await pickChoice($, row, c.label)
+    const isMulti = row.kind === 'multi' || (await read($, flips))[row.key] === true
+    return at(isMulti ? `toggled ${c.label} (:g sends)` : `picked ${c.label}`)
+  }
+  const owner = row.agent ? ['--agent', row.agent] : []
+  switch (more.length === 0 || ['e'].includes(word) ? word : '') {
+    case 's':
+      await answerRow($, row.key, ['--skip'])
+      return at('skipped')
+    case 'd':
+      await answerRow($, row.key, ['--dismiss'])
+      return at('dismissed')
+    case 'c':
+    case 'x':
+      await cactus($, row.key, ['clear', row.key, ...owner])
+      return at('cleared')
+    case 'e':
+      await cactus($, row.key, ['elaborate', row.key, ...(arg === '' ? [] : [arg])])
+      return at('sent back for a rewrite')
+    case 'b':
+      await cactus($, row.key, ['elaborate', row.key, '--decompose'])
+      return at('sent back to break up')
+    case 'u':
+      if (row.status === 'elaborate') {
+        await cactus($, row.key, ['elaborate', row.key, '--withdraw'])
+        return at('rewrite request withdrawn')
+      }
+      await undoLast($)
+      return 'cactus: undone'
+    case 'g': {
+      const mine = (await read($, picks))[row.key] ?? row.recommend ?? []
+      if (mine.length === 0) return at('nothing picked')
+      await answerRow($, row.key, mine.flatMap(l => ['-s', l]))
+      return at(`sent ${mine.join(', ')}`)
+    }
+    case 'm':
+      await setFlip($, row.key, (await read($, flips))[row.key] !== true)
+      return at('pick mode flipped')
+    case 'r':
+      await runRow($, row.key, row.act === 'run')
+      return at('ran')
+    case 'j':
+    case 'k':
+      await step($, word === 'j' ? 1 : -1)
+      return `cactus: ${(await read($, selected)) ?? ''} selected`
+    case '':
+      if (rest === '') return 'cactus: :1-9 pick · :y/:n · :s skip · :c clear · :e why · :b · :u · :g · :j/:k · :TEXT answers · :q12 aims · :: escapes'
+  }
+  // Anything else is a typed answer or verdict.
+  return (await submitText($, row.key, rest)) ? at(`sent "${firstLine(rest)}"`) : at('not sent')
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -702,6 +804,15 @@ export const register: Register = on => {
       ...composed,
       sections: [...composed.sections, { id: 'cactus-pane:guide', text, scope: 'session' }],
     }
+  })
+
+  // `:` at the start of a typed prompt talks to the pane, not the model.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.origin.kind !== 'composer' || e.command !== undefined || e.isMeta) return next(e)
+    const m = /^\s*:(:?)([\s\S]*)$/.exec(e.text)
+    if (m === null) return next(e)
+    if (m[1] === ':') return next({ ...e, text: `:${m[2] ?? ''}` })
+    return { drop: await colon($, m[2] ?? '') }
   })
 
   on('tool.call', { tool: 'Bash' }, ($, e, next) => {
@@ -746,22 +857,7 @@ export const register: Register = on => {
       const mine = picked[row.key] ?? (isMulti ? rec : [])
       const inputLabel = isHinting ? 'hint' : isMulti ? 'note' : PERSISTENT.has(row.act) ? 'verdict' : 'answer'
       const owner = row.agent ? ['--agent', row.agent] : []
-      const pick = (label: string, surface: typeof e.surface) => {
-        if (isData) {
-          const body = row.choices.find(c => c.label === label)?.description ?? ''
-          void $.ui.copy({ text: body, surface })
-          void answerRow($, row.key, ['-s', label])
-        } else if (isMulti) {
-          // The ring stays on the header, where enter sends.
-          void toggle($, row.key, label, rec).then(() =>
-            $.ui.focus({ requestId: PANE, key: `${row.key}:sel` }).catch(() => undefined),
-          )
-        } else if (isRunAct && label === 'approve') {
-          void runRow($, row.key, true)
-        } else {
-          void answerRow($, row.key, ['-s', label])
-        }
-      }
+      const pick = (label: string, surface: typeof e.surface) => void pickChoice($, row, label, surface)
       const choiceKey = (i: number) => (isConfirm && i < 2 ? (i === 0 ? 'y' : 'n') : String(i + 1))
 
       // The keys the hidden Buttons below carry, named once in the card.

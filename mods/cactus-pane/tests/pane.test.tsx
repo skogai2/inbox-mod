@@ -411,3 +411,36 @@ test('an open ask reads its act in the list', async ($, on) => {
   const ui = await mounted($, on, ROW, calls, 'terminal')
   expect((await ui.find({ key: 'q7:act' }))?.text).toContain('ask')
 })
+
+// The prompt's colon line acts on the pane's selected row, never the model.
+const TYPED = { origin: { kind: 'composer' }, wait: false } as const
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`:2 at the prompt picks the second choice (${surface})`, async ($, on) => {
+    const calls: string[][] = []
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    await mounted($, on, ROW, calls, surface)
+    const got = await $.prompt.submit({ ...TYPED, text: ':2' })
+    expect(got.drop).toContain('picked local')
+    expect(calls).toContainEqual(['cactus', 'answer', 'q7', '-s', 'local'])
+  })
+
+  test(`:e, :s, keyed :q7 and free text reach cactus (${surface})`, async ($, on) => {
+    const calls: string[][] = []
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    await mounted($, on, ROW, calls, surface)
+    await $.prompt.submit({ ...TYPED, text: ':e say what local costs' })
+    expect(calls).toContainEqual(['cactus', 'elaborate', 'q7', 'say what local costs'])
+    await $.prompt.submit({ ...TYPED, text: ':q7 maybe both' })
+    expect(calls).toContainEqual(['cactus', 'answer', 'q7', 'maybe both'])
+  })
+
+  test(`:: and plain lines go to the model (${surface})`, async ($, on) => {
+    const calls: string[][] = []
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    await mounted($, on, ROW, calls, surface)
+    expect((await $.prompt.submit({ ...TYPED, text: '::1 is a smiley' })).text).toBe(':1 is a smiley')
+    expect((await $.prompt.submit({ ...TYPED, text: '1' })).text).toBe('1')
+    expect(calls.some(c => c[1] === 'answer')).toBe(false)
+  })
+}
