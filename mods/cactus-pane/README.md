@@ -11,7 +11,7 @@ A live [cactus](https://github.com/eighteyes/cactus) inbox inside Claude Code. Y
 
 - Opens at session start. `/cactus-pane` opens it again.
 - A rail of open rows, a card for the focused one. A digit answers, `i` types (enter in the text line sends it), `g` sends a multi pick. Enter on a question only opens it; it never answers, so a stray enter cannot send a recommendation.
-- From the prompt, no focus needed: a line starting with `:` acts on the selected row and never reaches the model. `:1`-`:9` pick, `:y`/`:n`, `:s` skip, `:c` clear, `:e why` elaborate, `:b` break up, `:u` undo, `:g` send a multi pick, `:m` flip, `:r` run, `:j`/`:k` move, `:q12 2` aims at a row by key, any other text answers. `:` alone lists them; `::` sends the line to the model with one colon, and with the inbox empty a colon line goes to the model as typed.
+- From the prompt, no focus needed: a line starting with `:` acts on the selected row and never reaches the model. `:1`-`:9` pick, `:y`/`:n`, `:s` skip, `:c` clear, `:e why` elaborate, `:b` break up, `:u` undo, `:g` send a multi pick, `:m` flip, `:r` run, `:j`/`:k` move, `:q12 2` aims at a row by key, any other text answers. `:` alone lists them; `::` sends the line to the model with one colon, and with the inbox empty a colon line goes to the model as typed. The card's key legend ends with the colon key for its row (`:1`, `:y` on a confirm, `:text` with no choices), and the empty inbox names `:1` too.
 - When one of the session's rows moves, the pane starts a turn carrying the answer in full and clears the row. The agent posts `cactus ask --no-wait` and keeps working.
 
 ## What it runs and sends
