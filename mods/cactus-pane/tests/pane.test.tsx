@@ -368,6 +368,12 @@ test('a pane too narrow for the sunset shows only the words', async ($, on) => {
   const ui = await emptyPane($, on, 16)
   expect(await ui.find({ key: 'sunset' })).toBeUndefined()
   expect(await ui.find({ text: /Decisions incoming/ })).toBeDefined()
+  expect(await ui.find({ text: /:1 at the prompt/ })).toBeDefined()
+})
+
+test('the card legend names the prompt colon key', async ($, on) => {
+  const ui = await mounted($, on, ROW, [], 'terminal')
+  expect(await ui.find({ text: /:1 at the prompt/ })).toBeDefined()
 })
 
 test('a verdict on a review moves the pane to the next question', async ($, on) => {

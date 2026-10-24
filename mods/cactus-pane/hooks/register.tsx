@@ -875,6 +875,8 @@ export const register: Register = on => {
         row.files.length > 0 ? 'f view · o preview' : null,
         stack.length > 0 && !isElaborate ? 'u undo' : null,
         list.length > 1 ? 'j/k move' : null,
+        // The same keys work from the prompt with a colon, no focus needed.
+        `:${row.choices.length > 0 ? choiceKey(0) : 'text'} at the prompt`,
       ]
         .filter(Boolean)
         .join(' · ')
@@ -1191,6 +1193,7 @@ export const register: Register = on => {
             )}
             <Text bold>Cactus inbox empty.</Text>
             <Text dimColor>Decisions incoming...</Text>
+            <Text dimColor>:1 at the prompt answers one, once it arrives.</Text>
           </Box>
         )}
         {above > 0 && <Text dimColor>  ↑ {above} more (k)</Text>}
